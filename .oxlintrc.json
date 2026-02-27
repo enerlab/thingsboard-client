@@ -1,0 +1,70 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["import", "typescript", "unicorn", "promise"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "pedantic": "warn",
+    "perf": "warn",
+    "style": "warn",
+    "restriction": "off"
+  },
+  "rules": {
+    "import/no-duplicates": "error",
+    "import/no-self-import": "error",
+    "import/no-cycle": "error",
+
+    "@typescript-eslint/no-floating-promises": "error",
+    "@typescript-eslint/no-misused-promises": "error",
+    "@typescript-eslint/await-thenable": "error",
+    "@typescript-eslint/no-unnecessary-type-assertion": "warn",
+    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/consistent-type-imports": ["warn", {
+      "prefer": "type-imports"
+    }],
+    "@typescript-eslint/no-unused-vars": ["error", {
+      "argsIgnorePattern": "^_",
+      "varsIgnorePattern": "^_"
+    }],
+    "@typescript-eslint/no-import-type-side-effects": "warn",
+    "@typescript-eslint/no-non-null-assertion": "warn",
+
+    "unicorn/prefer-node-protocol": "error",
+    "unicorn/no-array-for-each": "warn",
+
+    "promise/no-return-wrap": "error",
+    "promise/no-nesting": "warn",
+
+    "no-console": "warn",
+    "no-debugger": "error",
+    "eqeqeq": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "no-eval": "error",
+    "no-implied-eval": "error",
+
+    "no-magic-numbers": "off",
+    "id-length": "off",
+    "sort-keys": "off",
+    "arrow-body-style": "off",
+    "func-style": "off",
+    "curly": "off",
+    "max-statements": "off",
+    "max-lines": "off",
+    "max-params": "off",
+    "max-lines-per-function": "off",
+    "max-nested-callbacks": "off",
+
+    "import/no-unassigned-import": "off",
+    "import/no-nodejs-modules": "off",
+    "import/exports-last": "off",
+    "import/no-named-export": "off",
+    "import/prefer-default-export": "off",
+    "import/group-exports": "off"
+  },
+  "ignorePatterns": [
+    "node_modules",
+    "dist",
+    "**/generated/**"
+  ]
+}

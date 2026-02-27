@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "tabWidth": 2,
+  "useTabs": false,
+  "semi": false,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "bracketSpacing": true,
+  "arrowParens": "always",
+  "endOfLine": "lf",
+
+  "experimentalSortImports": {
+    "newlinesBetween": true,
+    "groups": [
+      "side_effect",
+      ["value-builtin", "type-builtin"],
+      ["value-external", "type-external"],
+      ["value-internal", "type-internal"],
+      ["value-parent", "type-parent", "value-sibling", "type-sibling", "value-index", "type-index"]
+    ],
+    "internalPattern": ["^@/"],
+    "ignoreCase": true,
+    "order": "asc",
+    "sortSideEffects": false
+  },
+
+  "ignorePatterns": [
+    "node_modules",
+    "dist",
+    "**/generated/**"
+  ]
+}

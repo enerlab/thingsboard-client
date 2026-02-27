@@ -1,0 +1,68 @@
+{
+  "name": "@enerlab/thingsboard-client",
+  "version": "0.1.0",
+  "description": "Type-safe TypeScript client for the ThingsBoard REST API with Zod v4 runtime validation",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./zod": {
+      "types": "./dist/generated/zod.gen.d.ts",
+      "import": "./dist/generated/zod.gen.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "fetch-spec": "node --import tsx scripts/fetch-spec.ts",
+    "generate": "openapi-ts",
+    "build": "tsc --build",
+    "lint": "oxlint --tsconfig tsconfig.json --ignore-pattern 'src/generated/**' src/",
+    "format": "oxfmt src/ --ignore '!src/generated'",
+    "format:check": "oxfmt --check src/ --ignore '!src/generated'",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm generate && pnpm build",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "0.93.1",
+    "oxfmt": "^0.34.0",
+    "oxlint": "^1.49.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": [
+    "thingsboard",
+    "iot",
+    "openapi",
+    "typescript",
+    "client",
+    "zod",
+    "sdk",
+    "rest-api",
+    "energy-management"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/enerlab/thingsboard-client.git"
+  },
+  "homepage": "https://github.com/enerlab/thingsboard-client#readme",
+  "bugs": {
+    "url": "https://github.com/enerlab/thingsboard-client/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@8.14.1"
+}
