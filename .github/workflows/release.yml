@@ -34,6 +34,9 @@ jobs:
       - name: Generate client
         run: pnpm generate
 
+      - name: Test
+        run: pnpm test
+
       - name: Build
         run: pnpm build
 
