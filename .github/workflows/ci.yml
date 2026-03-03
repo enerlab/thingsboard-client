@@ -22,9 +22,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Fetch OpenAPI spec
-        run: pnpm fetch-spec
-
       - name: Generate client
         run: pnpm generate
 
