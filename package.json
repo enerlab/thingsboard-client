@@ -1,6 +1,6 @@
 {
   "name": "@enerlab/thingsboard-client",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Type-safe TypeScript client for the ThingsBoard REST API with Zod v4 runtime validation",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "fetch-spec": "node --import tsx scripts/fetch-spec.ts",
-    "generate": "openapi-ts",
+    "generate": "openapi-ts && node --import tsx scripts/postgenerate.ts",
     "build": "tsc --build",
     "lint": "oxlint --tsconfig tsconfig.json --ignore-pattern 'src/generated/**' src/",
     "format": "oxfmt src/ --ignore '!src/generated'",

@@ -6,6 +6,26 @@ export interface LoginResponse {
 	refreshToken: string
 }
 
+/** Tracks clients that already have the auth interceptor installed. */
+const authInstalled = new WeakSet<Client>()
+
+/**
+ * Installs a request interceptor that sets the `X-Authorization` header
+ * from the client's `auth` config value. Safe to call multiple times —
+ * duplicate interceptors are prevented via a WeakSet guard.
+ */
+export function setupAuth(client: Client): void {
+	if (authInstalled.has(client)) return
+	authInstalled.add(client)
+	client.interceptors.request.use((request, options) => {
+		const token = options.auth as string | undefined
+		if (token) {
+			request.headers.set('X-Authorization', `Bearer ${token}`)
+		}
+		return request
+	})
+}
+
 /**
  * Authenticates with ThingsBoard and sets the auth token on the client.
  *
@@ -18,6 +38,7 @@ export async function login(
 	options?: { client?: Client },
 ): Promise<LoginResponse> {
 	const c = options?.client ?? defaultClient
+	setupAuth(c)
 	const config = c.getConfig()
 	const baseUrl = config.baseUrl ?? ''
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
 	zDevice,
 	zCustomer,
+	zAsset,
 	zDeviceCredentials,
 	zEntityTypeFilter,
 } from '@/generated/zod.gen'
@@ -199,6 +200,60 @@ describe('Zod schema contract tests', () => {
 
 			const result = zEntityTypeFilter.safeParse(payload)
 			expect(result.success).toBe(false)
+		})
+	})
+
+	describe('nullable optional fields', () => {
+		it('accepts null for Asset.label', () => {
+			const result = zAsset.safeParse({
+				name: 'Building A',
+				label: null,
+			})
+			expect(result.success).toBe(true)
+		})
+
+		it('accepts null for Asset.type', () => {
+			const result = zAsset.safeParse({
+				name: 'Building A',
+				type: null,
+			})
+			expect(result.success).toBe(true)
+		})
+
+		it('accepts null for Device.label', () => {
+			const result = zDevice.safeParse({
+				name: 'Sensor',
+				deviceProfileId: {
+					id: DEVICE_PROFILE_UUID,
+					entityType: 'DEVICE_PROFILE',
+				},
+				label: null,
+			})
+			expect(result.success).toBe(true)
+		})
+
+		it('accepts null for Customer.phone', () => {
+			const result = zCustomer.safeParse({
+				title: 'Acme Corp',
+				email: 'admin@acme.com',
+				phone: null,
+			})
+			expect(result.success).toBe(true)
+		})
+
+		it('still accepts undefined for optional fields', () => {
+			const result = zAsset.safeParse({
+				name: 'Building A',
+				label: undefined,
+			})
+			expect(result.success).toBe(true)
+		})
+
+		it('still accepts omitted optional fields', () => {
+			const result = zAsset.safeParse({
+				name: 'Building A',
+			})
+			expect(result.success).toBe(true)
 		})
 	})
 })
