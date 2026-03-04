@@ -1,4 +1,4 @@
-export { login, logout, setupAuth } from './auth'
+export { login, logout, setAuth, setBaseUrl, setupAuth } from './auth'
 export type { LoginResponse } from './auth'
 
 export { fetchAllPages } from './pagination'

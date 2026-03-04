@@ -59,6 +59,29 @@ export async function login(
 }
 
 /**
+ * Sets the base URL on the client.
+ */
+export function setBaseUrl(
+	baseUrl: string,
+	options?: { client?: Client },
+): void {
+	const c = options?.client ?? defaultClient
+	c.setConfig({ baseUrl })
+}
+
+/**
+ * Sets the auth token on the client.
+ */
+export function setAuth(
+	token: string,
+	options?: { client?: Client },
+): void {
+	const c = options?.client ?? defaultClient
+	setupAuth(c)
+	c.setConfig({ auth: token })
+}
+
+/**
  * Clears the auth token from the client.
  */
 export function logout(options?: { client?: Client }): void {
