@@ -1,6 +1,9 @@
 export { login, logout, setupAuth } from './auth'
 export type { LoginResponse } from './auth'
 
+export { fetchAllPages } from './pagination'
+export type { PageData } from './pagination'
+
 export { client } from './generated/client.gen'
 export type { CreateClientConfig } from './generated/client.gen'
 export * from './generated/index'
