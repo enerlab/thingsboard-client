@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { login, logout, setAuth, setBaseUrl, setupAuth } from '@/auth'
+import { login, logout, setupAuth } from '@/auth'
 import { createClient, createConfig } from '@/generated/client'
 
 const BASE_URL = 'https://tb.example.com'
@@ -97,58 +97,6 @@ describe('logout()', () => {
 
 		logout({ client: c })
 		expect(c.getConfig().auth).toBeUndefined()
-	})
-})
-
-describe('setBaseUrl()', () => {
-	it('sets the base URL on the client', () => {
-		const c = createClient(createConfig())
-		setBaseUrl('https://tb.example.com', { client: c })
-		expect(c.getConfig().baseUrl).toBe('https://tb.example.com')
-	})
-
-	it('does not clobber existing auth', () => {
-		const c = createClient(createConfig())
-		c.setConfig({ auth: 'existing-token' })
-		setBaseUrl('https://tb.example.com', { client: c })
-		expect(c.getConfig().auth).toBe('existing-token')
-		expect(c.getConfig().baseUrl).toBe('https://tb.example.com')
-	})
-})
-
-describe('setAuth()', () => {
-	let fetchSpy: ReturnType<typeof vi.spyOn>
-
-	beforeEach(() => {
-		fetchSpy = vi.spyOn(globalThis, 'fetch')
-	})
-
-	afterEach(() => {
-		fetchSpy.mockRestore()
-	})
-
-	it('sets the auth token on the client', () => {
-		const c = createClient(createConfig({ baseUrl: BASE_URL }))
-		setAuth('my-token', { client: c })
-		expect(c.getConfig().auth).toBe('my-token')
-	})
-
-	it('installs the auth interceptor automatically', async () => {
-		fetchSpy.mockResolvedValueOnce(new Response('{}', { status: 200 }))
-
-		const c = createClient(createConfig({ baseUrl: BASE_URL }))
-		setAuth('my-token', { client: c })
-
-		await c.request({ method: 'GET', url: '/api/test' })
-
-		const request = fetchSpy.mock.calls[0]![0] as Request
-		expect(request.headers.get('X-Authorization')).toBe('Bearer my-token')
-	})
-
-	it('does not clobber existing baseUrl', () => {
-		const c = createClient(createConfig({ baseUrl: BASE_URL }))
-		setAuth('my-token', { client: c })
-		expect(c.getConfig().baseUrl).toBe(BASE_URL)
 	})
 })
 
