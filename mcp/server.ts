@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { initTbClient } from './tb-init'
+import { registerAlarmTools } from './tools/alarms'
 import { registerCalculatedFieldTools } from './tools/calculated-fields'
 
 const server = new McpServer({
@@ -13,8 +14,8 @@ const server = new McpServer({
 
 // Register tool modules
 registerCalculatedFieldTools(server)
+registerAlarmTools(server)
 // Future: registerRuleChainTools(server)
-// Future: registerAlarmTools(server)
 // Future: registerDeviceTools(server)
 
 // Initialize ThingsBoard client and start MCP server
