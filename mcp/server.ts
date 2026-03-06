@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { initTbClient } from './tb-init'
 import { registerCalculatedFieldTools } from './tools/calculated-fields'
+import { registerRuleChainTools } from './tools/rule-chains'
 
 const server = new McpServer({
 	name: 'tb-ops',
@@ -13,7 +14,7 @@ const server = new McpServer({
 
 // Register tool modules
 registerCalculatedFieldTools(server)
-// Future: registerRuleChainTools(server)
+registerRuleChainTools(server)
 // Future: registerAlarmTools(server)
 // Future: registerDeviceTools(server)
 
