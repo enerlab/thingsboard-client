@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { initTbClient } from './tb-init'
 import { registerCalculatedFieldTools } from './tools/calculated-fields'
+import { registerDeviceTools } from './tools/devices'
 
 const server = new McpServer({
 	name: 'tb-ops',
@@ -13,9 +14,9 @@ const server = new McpServer({
 
 // Register tool modules
 registerCalculatedFieldTools(server)
+registerDeviceTools(server)
 // Future: registerRuleChainTools(server)
 // Future: registerAlarmTools(server)
-// Future: registerDeviceTools(server)
 
 // Initialize ThingsBoard client and start MCP server
 await initTbClient()
