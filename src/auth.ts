@@ -6,22 +6,57 @@ export interface LoginResponse {
 	refreshToken: string
 }
 
-/** Tracks clients that already have the auth interceptor installed. */
-const authInstalled = new WeakSet<Client>()
+export type AuthConfig =
+	| { mode: 'bearer'; token: string }
+	| { mode: 'apiKey'; key: string }
+	| { mode: 'dynamic'; resolve: () => string | Promise<string> }
+
+/** Stores the auth config for each client that has the interceptor installed. */
+const authConfigs = new WeakMap<Client, AuthConfig | undefined>()
 
 /**
- * Installs a request interceptor that sets the `X-Authorization` header
- * from the client's `auth` config value. Safe to call multiple times —
- * duplicate interceptors are prevented via a WeakSet guard.
+ * Installs a request interceptor that sets the `X-Authorization` header.
+ *
+ * - **No config** — reads `options.auth` and sets `Bearer ${token}` (backward compat with `login()`).
+ * - **`bearer`** — static `Bearer ${token}` header.
+ * - **`apiKey`** — static `ApiKey ${key}` header.
+ * - **`dynamic`** — calls `resolve()` per-request for the full header value.
+ *
+ * Safe to call multiple times — duplicate interceptors are prevented via a WeakMap guard.
+ * Calling again with a different config updates the stored config without adding a new interceptor.
  */
-export function setupAuth(client: Client): void {
-	if (authInstalled.has(client)) return
-	authInstalled.add(client)
-	client.interceptors.request.use((request, options) => {
-		const token = options.auth as string | undefined
-		if (token) {
-			request.headers.set('X-Authorization', `Bearer ${token}`)
+export function setupAuth(client: Client, config?: AuthConfig): void {
+	if (authConfigs.has(client)) {
+		// Interceptor already installed — just update the config
+		authConfigs.set(client, config)
+		return
+	}
+
+	authConfigs.set(client, config)
+
+	client.interceptors.request.use(async (request, options) => {
+		const cfg = authConfigs.get(client)
+
+		let headerValue: string | undefined
+
+		if (cfg === undefined) {
+			// No config — use options.auth (backward compat with login())
+			const token = options.auth as string | undefined
+			if (token) {
+				headerValue = `Bearer ${token}`
+			}
+		} else if (cfg.mode === 'bearer') {
+			headerValue = `Bearer ${cfg.token}`
+		} else if (cfg.mode === 'apiKey') {
+			headerValue = `ApiKey ${cfg.key}`
+		} else if (cfg.mode === 'dynamic') {
+			headerValue = await cfg.resolve()
 		}
+
+		if (headerValue) {
+			request.headers.set('X-Authorization', headerValue)
+		}
+
 		return request
 	})
 }

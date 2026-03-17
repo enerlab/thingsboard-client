@@ -1,6 +1,6 @@
 {
   "name": "@enerlab/thingsboard-client",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Type-safe TypeScript client for the ThingsBoard REST API with Zod v4 runtime validation",
   "type": "module",
   "main": "./dist/index.js",
