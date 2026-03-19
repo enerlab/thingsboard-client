@@ -166,7 +166,7 @@ describe('Zod schema contract tests', () => {
 	describe('zEntityTypeFilter', () => {
 		it('accepts a valid entity type filter', () => {
 			const payload = {
-				type: 'EntityTypeFilter',
+				type: 'entityType',
 				entityType: 'DEVICE',
 			}
 
@@ -185,7 +185,7 @@ describe('Zod schema contract tests', () => {
 
 		it('accepts filter without entityType', () => {
 			const payload = {
-				type: 'EntityTypeFilter',
+				type: 'entityType',
 			}
 
 			const result = zEntityTypeFilter.safeParse(payload)
@@ -194,7 +194,7 @@ describe('Zod schema contract tests', () => {
 
 		it('rejects invalid entity types', () => {
 			const payload = {
-				type: 'EntityTypeFilter',
+				type: 'entityType',
 				entityType: 'INVALID_TYPE',
 			}
 
