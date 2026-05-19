@@ -35267,7 +35267,22 @@
             "example": 0
           },
           "configuration": {
-            "$ref": "#/components/schemas/SimpleCalculatedFieldConfiguration"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SimpleCalculatedFieldConfiguration"
+              },
+              {
+                "$ref": "#/components/schemas/PropagationCalculatedFieldConfiguration"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "SIMPLE": "#/components/schemas/SimpleCalculatedFieldConfiguration",
+                "SCRIPT": "#/components/schemas/SimpleCalculatedFieldConfiguration",
+                "PROPAGATION": "#/components/schemas/PropagationCalculatedFieldConfiguration"
+              }
+            }
           },
           "version": {
             "type": "integer",
@@ -35449,11 +35464,19 @@
           },
           "useLatestTs": {
             "type": "boolean"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "SIMPLE",
+              "SCRIPT"
+            ]
           }
         },
         "required": [
           "arguments",
-          "output"
+          "output",
+          "type"
         ]
       },
       "TimeSeriesImmediateOutputStrategy": {
@@ -42826,7 +42849,22 @@
             "example": 0
           },
           "configuration": {
-            "$ref": "#/components/schemas/SimpleCalculatedFieldConfiguration"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SimpleCalculatedFieldConfiguration"
+              },
+              {
+                "$ref": "#/components/schemas/PropagationCalculatedFieldConfiguration"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "SIMPLE": "#/components/schemas/SimpleCalculatedFieldConfiguration",
+                "SCRIPT": "#/components/schemas/SimpleCalculatedFieldConfiguration",
+                "PROPAGATION": "#/components/schemas/PropagationCalculatedFieldConfiguration"
+              }
+            }
           },
           "version": {
             "type": "integer",
@@ -43509,6 +43547,69 @@
             }
           }
         }
+      },
+      "PropagationCalculatedFieldConfiguration": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "PROPAGATION"
+            ]
+          },
+          "arguments": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Argument"
+            },
+            "minProperties": 1
+          },
+          "expression": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "output": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttributesOutput"
+              },
+              {
+                "$ref": "#/components/schemas/TimeSeriesOutput"
+              }
+            ]
+          },
+          "relation": {
+            "type": "object",
+            "properties": {
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "TO",
+                  "FROM"
+                ]
+              },
+              "relationType": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "direction",
+              "relationType"
+            ]
+          },
+          "applyExpressionToResolvedArguments": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "type",
+          "arguments",
+          "output",
+          "relation",
+          "applyExpressionToResolvedArguments"
+        ]
       }
     },
     "securitySchemes": {

@@ -253,6 +253,92 @@ interface Spec {
   [key: string]: unknown
 }
 
+/**
+ * ThingsBoard's spec types `CalculatedField.configuration` as a flat `$ref` to
+ * `SimpleCalculatedFieldConfiguration` — it never models the PROPAGATION
+ * variant, even though `PROPAGATION` is in the `CalculatedField.type` enum.
+ * Codegen then can't represent a PROPAGATION calculated field at all.
+ *
+ * Synthesize the missing `PropagationCalculatedFieldConfiguration` schema and
+ * turn `configuration` into a `oneOf` discriminated on `type`.
+ */
+function patchCalculatedFieldConfiguration(
+  schemas: Record<string, Schema>,
+  errors: string[],
+): void {
+  const simple = schemas.SimpleCalculatedFieldConfiguration
+  if (!simple) {
+    errors.push('CF configuration patch: SimpleCalculatedFieldConfiguration not found')
+    return
+  }
+
+  // The discriminator property must exist on every `oneOf` member. SIMPLE and
+  // SCRIPT share `SimpleCalculatedFieldConfiguration`, so `type` covers both.
+  const simpleProps = (simple.properties ?? {}) as Record<string, unknown>
+  simpleProps.type ??= { type: 'string', enum: ['SIMPLE', 'SCRIPT'] }
+  simple.properties = simpleProps
+  const simpleRequired = (simple.required ?? []) as string[]
+  if (!simpleRequired.includes('type')) simpleRequired.push('type')
+  simple.required = simpleRequired
+
+  /*
+   * Synthesize the PROPAGATION variant. Fields mirror the ThingsBoard wire
+   * payload; `expression` may be null for a pass-through propagation.
+   */
+  schemas.PropagationCalculatedFieldConfiguration ??= {
+    type: 'object',
+    properties: {
+      type: { type: 'string', enum: ['PROPAGATION'] },
+      arguments: {
+        type: 'object',
+        additionalProperties: { $ref: '#/components/schemas/Argument' },
+        minProperties: 1,
+      },
+      expression: { type: ['string', 'null'] },
+      output: {
+        oneOf: [
+          { $ref: '#/components/schemas/AttributesOutput' },
+          { $ref: '#/components/schemas/TimeSeriesOutput' },
+        ],
+      },
+      relation: {
+        type: 'object',
+        properties: {
+          direction: { type: 'string', enum: ['TO', 'FROM'] },
+          relationType: { type: 'string' },
+        },
+        required: ['direction', 'relationType'],
+      },
+      applyExpressionToResolvedArguments: { type: 'boolean' },
+    },
+    required: ['type', 'arguments', 'output', 'relation', 'applyExpressionToResolvedArguments'],
+  }
+
+  // Replace the flat `$ref` on each CF schema's `configuration` with the union.
+  const configuration = {
+    oneOf: [
+      { $ref: '#/components/schemas/SimpleCalculatedFieldConfiguration' },
+      { $ref: '#/components/schemas/PropagationCalculatedFieldConfiguration' },
+    ],
+    discriminator: {
+      propertyName: 'type',
+      mapping: {
+        SIMPLE: '#/components/schemas/SimpleCalculatedFieldConfiguration',
+        SCRIPT: '#/components/schemas/SimpleCalculatedFieldConfiguration',
+        PROPAGATION: '#/components/schemas/PropagationCalculatedFieldConfiguration',
+      },
+    },
+  }
+  for (const name of ['CalculatedField', 'CalculatedFieldInfo']) {
+    const props = schemas[name]?.properties as Record<string, unknown> | undefined
+    if (props?.configuration) {
+      props.configuration = structuredClone(configuration)
+    } else {
+      errors.push(`CF configuration patch: ${name}.properties.configuration not found`)
+    }
+  }
+}
+
 const spec: Spec = JSON.parse(readFileSync(SPEC_PATH, 'utf8'))
 const schemas = spec.components.schemas
 
@@ -288,6 +374,8 @@ for (const [parentName, mapping] of Object.entries(DISCRIMINATOR_MAPPINGS)) {
   schema.discriminator.mapping = mapping
   patched++
 }
+
+patchCalculatedFieldConfiguration(schemas, errors)
 
 if (errors.length > 0) {
   console.error('patch-spec: ERRORS:')
