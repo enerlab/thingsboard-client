@@ -255,14 +255,360 @@ interface Spec {
 }
 
 /**
- * ThingsBoard's spec types `CalculatedField.configuration` as a flat `$ref` to
- * `SimpleCalculatedFieldConfiguration` — it never models the PROPAGATION
- * variant, even though `PROPAGATION` is in the `CalculatedField.type` enum.
- * Codegen then can't represent a PROPAGATION calculated field at all.
+ * TB entities ship in up to four wire shapes: `Foo`, `FooInfo`, `FooWritable`,
+ * `FooInfoWritable`. Read/write endpoints share the same Java model, so a patch
+ * that fixes only the read shape almost always leaves the write path broken.
  *
- * Synthesize the missing `PropagationCalculatedFieldConfiguration` schema and
- * turn `configuration` into a `oneOf` discriminated on `type`.
+ * `forEachShape` iterates all four variants of a base name, calls `fn` for
+ * each that exists in the spec, and reports the outcome. Variants not in the
+ * spec aren't an error — hey-api synthesizes `*Writable` shapes downstream from
+ * the base type when the spec omits them. But missing variants are still worth
+ * logging: it's how you spot when codegen tooling changes its synthesis policy
+ * (now-missing variants previously present, or vice versa).
+ *
+ * `fn` returns `'patched'` for first-time mutations or `'already-patched'` for
+ * idempotent re-runs. The result is summarized in a single log line per call
+ * so PR diffs surface unintended skew.
  */
+const SHAPE_SUFFIXES = ['', 'Info', 'Writable', 'InfoWritable'] as const
+
+interface ForEachShapeResult {
+  patched: string[]
+  alreadyPatched: string[]
+  missing: string[]
+}
+
+function forEachShape(
+  baseName: string,
+  schemas: Record<string, Schema>,
+  fn: (schema: Schema, name: string) => 'patched' | 'already-patched',
+): ForEachShapeResult {
+  const result: ForEachShapeResult = { patched: [], alreadyPatched: [], missing: [] }
+  for (const suffix of SHAPE_SUFFIXES) {
+    const name = `${baseName}${suffix}`
+    const schema = schemas[name]
+    if (!schema) {
+      result.missing.push(name)
+      continue
+    }
+    const outcome = fn(schema, name)
+    if (outcome === 'patched') result.patched.push(name)
+    else result.alreadyPatched.push(name)
+  }
+  return result
+}
+
+function logShapeResult(label: string, r: ForEachShapeResult): void {
+  const fmt = (xs: string[]) => (xs.length === 0 ? '(none)' : xs.join(', '))
+  console.log(
+    `patch-spec: ${label} shapes — patched: ${fmt(r.patched)}; already: ${fmt(r.alreadyPatched)}; missing-from-spec: ${fmt(r.missing)}`,
+  )
+}
+
+/**
+ * ThingsBoard's spec doesn't fully model the polymorphic
+ * `CalculatedField.configuration` union — at minimum it lumps SIMPLE and SCRIPT
+ * together, and historically omitted PROPAGATION entirely. Verified against
+ * `BaseCalculatedFieldConfiguration` and the `@JsonSubTypes`/`@DiscriminatorMapping`
+ * annotations on `CalculatedFieldConfiguration` in TB master.
+ *
+ * This patch:
+ *  - narrows `SimpleCalculatedFieldConfiguration.type` to `['SIMPLE']`
+ *  - synthesizes `ScriptCalculatedFieldConfiguration` (clone of Simple with `type: ['SCRIPT']`)
+ *  - synthesizes `PropagationCalculatedFieldConfiguration` (when upstream omits it)
+ *  - synthesizes `AlarmCalculatedFieldConfiguration` (all deps already exist in spec)
+ *  - synthesizes `RelatedEntitiesAggregationCalculatedFieldConfiguration` and
+ *    `EntityAggregationCalculatedFieldConfiguration` plus their deep dependency
+ *    tree: `AggMetric`, `AggKeyInput`, `AggFunctionInput`, `BaseAggInterval`,
+ *    the 8 `*Interval` subtypes (Hour/Day/Week/WeekSunSat/Month/Quarter/Year/Custom),
+ *    and `Watermark`. Verified against the corresponding Java classes under
+ *    `…/cf/configuration/aggregation/**` on TB master.
+ *  - rewrites `CalculatedField{,Info}{,Writable}.configuration` to a 6-variant
+ *    discriminated `oneOf`
+ *
+ * NOT covered yet — `GeofencingCalculatedFieldConfiguration`. It references
+ * `EntityCoordinates` and `ZoneGroupConfiguration` (with further subtypes),
+ * neither in the spec. Tracked for a follow-up; the SDK's `CalculatedField.type`
+ * still lists `GEOFENCING` as a valid string literal so the operation isn't
+ * unreachable — only the typed `configuration` shape is missing.
+ *
+ * Each gated mutation below has three valid states:
+ *   - upstream still has a known broken/lumped shape  → apply the patch
+ *   - we already applied the patch                    → idempotent no-op
+ *   - anything else                                   → upstream changed; error
+ *                                                       out so the maintainer
+ *                                                       reviews this patch.
+ */
+
+/** Output field as `oneOf` of the two concrete subtypes. Inline because
+ *  `$ref: '#/components/schemas/Output'` resolves to the bare base type in
+ *  codegen — it loses the union and the `type: 'ATTRIBUTES' | 'TIME_SERIES'`
+ *  literals. Inline `oneOf` produces precise discriminated-union TS types. */
+const OUTPUT_ONEOF = {
+  oneOf: [
+    { $ref: '#/components/schemas/AttributesOutput' },
+    { $ref: '#/components/schemas/TimeSeriesOutput' },
+  ],
+}
+
+const ARGUMENT_MAP = {
+  type: 'object',
+  additionalProperties: { $ref: '#/components/schemas/Argument' },
+  minProperties: 1,
+}
+
+const buildSimpleSchema = (): Schema => ({
+  type: 'object',
+  properties: {
+    arguments: structuredClone(ARGUMENT_MAP),
+    expression: { type: 'string' },
+    output: structuredClone(OUTPUT_ONEOF),
+    useLatestTs: { type: 'boolean' },
+    type: { type: 'string', enum: ['SIMPLE'] },
+  },
+  required: ['arguments', 'output', 'type'],
+})
+
+const buildScriptSchema = (): Schema => ({
+  type: 'object',
+  properties: {
+    arguments: structuredClone(ARGUMENT_MAP),
+    expression: { type: 'string' },
+    output: structuredClone(OUTPUT_ONEOF),
+    useLatestTs: { type: 'boolean' },
+    type: { type: 'string', enum: ['SCRIPT'] },
+  },
+  required: ['arguments', 'output', 'type'],
+})
+
+const buildPropagationSchema = (): Schema => ({
+  type: 'object',
+  properties: {
+    type: { type: 'string', enum: ['PROPAGATION'] },
+    arguments: structuredClone(ARGUMENT_MAP),
+    expression: { type: ['string', 'null'] },
+    output: structuredClone(OUTPUT_ONEOF),
+    relation: {
+      type: 'object',
+      properties: {
+        direction: { type: 'string', enum: ['TO', 'FROM'] },
+        relationType: { type: 'string' },
+      },
+      required: ['direction', 'relationType'],
+    },
+    applyExpressionToResolvedArguments: { type: 'boolean' },
+  },
+  required: ['type', 'arguments', 'output', 'relation', 'applyExpressionToResolvedArguments'],
+})
+
+/**
+ * AlarmCalculatedFieldConfiguration: no `output` on the wire (the Java
+ * `getOutput()` returns null and isn't serialized). Wire fields mirror the
+ * Java class: `arguments`, `createRules`, `clearRule`, propagation flags.
+ * `createRules` is `Map<AlarmSeverity, AlarmRule>` — OpenAPI represents map
+ * keys as plain `string` (AlarmSeverity narrowing is a JSON limitation).
+ */
+const buildAlarmSchema = (): Schema => ({
+  type: 'object',
+  properties: {
+    type: { type: 'string', enum: ['ALARM'] },
+    arguments: structuredClone(ARGUMENT_MAP),
+    createRules: {
+      type: 'object',
+      additionalProperties: { $ref: '#/components/schemas/AlarmRule' },
+      minProperties: 1,
+    },
+    clearRule: { $ref: '#/components/schemas/AlarmRule' },
+    propagate: { type: 'boolean' },
+    propagateToOwner: { type: 'boolean' },
+    propagateToTenant: { type: 'boolean' },
+    propagateRelationTypes: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+  required: ['type', 'arguments', 'createRules'],
+})
+
+/**
+ * AggInput is a polymorphic interface in Java with two subtypes (`AggKeyInput`
+ * and `AggFunctionInput`), discriminated on `type`. We model the subtypes as
+ * standalone schemas and inline a oneOf+discriminator at the use site (in
+ * `AggMetric.input`) so hey-api emits a precise discriminated union.
+ */
+const AGG_INPUT_ONEOF = {
+  oneOf: [
+    { $ref: '#/components/schemas/AggKeyInput' },
+    { $ref: '#/components/schemas/AggFunctionInput' },
+  ],
+  discriminator: {
+    propertyName: 'type',
+    mapping: {
+      key: '#/components/schemas/AggKeyInput',
+      function: '#/components/schemas/AggFunctionInput',
+    },
+  },
+}
+
+const buildAggKeyInputSchema = (): Schema => ({
+  type: 'object',
+  properties: {
+    type: { type: 'string', enum: ['key'] },
+    key: { type: 'string' },
+  },
+  required: ['type', 'key'],
+})
+
+const buildAggFunctionInputSchema = (): Schema => ({
+  type: 'object',
+  properties: {
+    type: { type: 'string', enum: ['function'] },
+    function: { type: 'string' },
+  },
+  required: ['type', 'function'],
+})
+
+const buildAggMetricSchema = (): Schema => ({
+  type: 'object',
+  properties: {
+    function: {
+      type: 'string',
+      enum: ['MIN', 'MAX', 'SUM', 'AVG', 'COUNT', 'COUNT_UNIQUE'],
+    },
+    filter: { type: 'string' },
+    input: structuredClone(AGG_INPUT_ONEOF),
+    defaultValue: { type: 'number', format: 'double' },
+  },
+  // Java has no @NotNull on any field. Required mirrors that, but TB validates
+  // metrics at runtime — `metrics` map being NotEmpty is enforced at the
+  // CF-configuration level (in `required` there).
+  required: [],
+})
+
+/** BaseAggInterval is the abstract parent: `tz` (NotBlank) + optional offsetSec. */
+const buildBaseAggIntervalSchema = (): Schema => ({
+  type: 'object',
+  properties: {
+    tz: { type: 'string', minLength: 1 },
+    offsetSec: { type: 'integer', format: 'int64' },
+  },
+  required: ['tz'],
+})
+
+/** allOf-extends BaseAggInterval and pins `type` to a single literal. */
+const buildIntervalSubtype = (
+  typeLiteral: string,
+  extraProps: Record<string, unknown> = {},
+  extraRequired: string[] = [],
+): Schema => ({
+  allOf: [
+    { $ref: '#/components/schemas/BaseAggInterval' },
+    {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: [typeLiteral] },
+        ...extraProps,
+      },
+      required: ['type', ...extraRequired],
+    },
+  ],
+})
+
+const buildHourIntervalSchema = (): Schema => buildIntervalSubtype('HOUR')
+const buildDayIntervalSchema = (): Schema => buildIntervalSubtype('DAY')
+const buildWeekIntervalSchema = (): Schema => buildIntervalSubtype('WEEK')
+const buildWeekSunSatIntervalSchema = (): Schema => buildIntervalSubtype('WEEK_SUN_SAT')
+const buildMonthIntervalSchema = (): Schema => buildIntervalSubtype('MONTH')
+const buildQuarterIntervalSchema = (): Schema => buildIntervalSubtype('QUARTER')
+const buildYearIntervalSchema = (): Schema => buildIntervalSubtype('YEAR')
+const buildCustomIntervalSchema = (): Schema =>
+  buildIntervalSubtype(
+    'CUSTOM',
+    { durationSec: { type: 'integer', format: 'int64', minimum: 1 } },
+    ['durationSec'],
+  )
+
+const AGG_INTERVAL_ONEOF = {
+  oneOf: [
+    { $ref: '#/components/schemas/HourInterval' },
+    { $ref: '#/components/schemas/DayInterval' },
+    { $ref: '#/components/schemas/WeekInterval' },
+    { $ref: '#/components/schemas/WeekSunSatInterval' },
+    { $ref: '#/components/schemas/MonthInterval' },
+    { $ref: '#/components/schemas/QuarterInterval' },
+    { $ref: '#/components/schemas/YearInterval' },
+    { $ref: '#/components/schemas/CustomInterval' },
+  ],
+  discriminator: {
+    propertyName: 'type',
+    mapping: {
+      HOUR: '#/components/schemas/HourInterval',
+      DAY: '#/components/schemas/DayInterval',
+      WEEK: '#/components/schemas/WeekInterval',
+      WEEK_SUN_SAT: '#/components/schemas/WeekSunSatInterval',
+      MONTH: '#/components/schemas/MonthInterval',
+      QUARTER: '#/components/schemas/QuarterInterval',
+      YEAR: '#/components/schemas/YearInterval',
+      CUSTOM: '#/components/schemas/CustomInterval',
+    },
+  },
+}
+
+const buildWatermarkSchema = (): Schema => ({
+  type: 'object',
+  properties: {
+    duration: { type: 'integer', format: 'int64', minimum: 0 },
+  },
+  required: ['duration'],
+})
+
+/**
+ * RelatedEntitiesAggregationCalculatedFieldConfiguration: aggregation over
+ * entities reachable via a relation path. `arguments`, `metrics`, `relation`,
+ * and `output` are required; `scheduledUpdateInterval` is optional.
+ */
+const buildRelatedEntitiesAggregationSchema = (): Schema => ({
+  type: 'object',
+  properties: {
+    type: { type: 'string', enum: ['RELATED_ENTITIES_AGGREGATION'] },
+    relation: { $ref: '#/components/schemas/RelationPathLevel' },
+    arguments: structuredClone(ARGUMENT_MAP),
+    deduplicationIntervalInSec: { type: 'integer', format: 'int64' },
+    metrics: {
+      type: 'object',
+      additionalProperties: { $ref: '#/components/schemas/AggMetric' },
+      minProperties: 1,
+    },
+    output: structuredClone(OUTPUT_ONEOF),
+    useLatestTs: { type: 'boolean' },
+    scheduledUpdateInterval: { type: 'integer', format: 'int32' },
+  },
+  required: ['type', 'relation', 'arguments', 'metrics', 'output'],
+})
+
+/**
+ * EntityAggregationCalculatedFieldConfiguration: aggregation over time
+ * intervals for a single entity. `arguments`, `metrics`, `interval`, and
+ * `output` are required; `watermark` and `produceIntermediateResult` optional.
+ */
+const buildEntityAggregationSchema = (): Schema => ({
+  type: 'object',
+  properties: {
+    type: { type: 'string', enum: ['ENTITY_AGGREGATION'] },
+    arguments: structuredClone(ARGUMENT_MAP),
+    metrics: {
+      type: 'object',
+      additionalProperties: { $ref: '#/components/schemas/AggMetric' },
+      minProperties: 1,
+    },
+    interval: structuredClone(AGG_INTERVAL_ONEOF),
+    watermark: { $ref: '#/components/schemas/Watermark' },
+    produceIntermediateResult: { type: 'boolean' },
+    output: structuredClone(OUTPUT_ONEOF),
+  },
+  required: ['type', 'arguments', 'metrics', 'interval', 'output'],
+})
+
 function patchCalculatedFieldConfiguration(
   schemas: Record<string, Schema>,
   errors: string[],
@@ -273,36 +619,23 @@ function patchCalculatedFieldConfiguration(
     return
   }
 
-  /*
-   * Every schema this patch references must exist; if upstream renames one of
-   * them, openapi-ts would silently emit `unknown` for that field and a future
-   * PROPAGATION user gets a useless type. Fail loud instead.
-   */
-  for (const dep of ['Argument', 'AttributesOutput', 'TimeSeriesOutput']) {
+  // Every schema this patch references must exist; if upstream renames one of
+  // them, openapi-ts would silently emit `unknown` for that field. Fail loud.
+  for (const dep of ['Argument', 'AttributesOutput', 'TimeSeriesOutput', 'AlarmRule', 'RelationPathLevel']) {
     if (!schemas[dep]) {
       errors.push(`CF configuration patch: dependency schema "${dep}" not found`)
     }
   }
 
-  /*
-   * Each gated mutation below has three valid states:
-   *   - upstream still has the broken shape  → apply the patch
-   *   - we already applied the patch         → idempotent no-op (re-runs)
-   *   - anything else                        → upstream changed; error out so
-   *                                            the maintainer reviews/removes
-   *                                            this patch instead of silently
-   *                                            clobbering upstream's fix.
-   */
-
-  // The discriminator property must exist on every `oneOf` member. SIMPLE and
-  // SCRIPT share `SimpleCalculatedFieldConfiguration`, so `type` covers both.
-  const patchedTypeProp = { type: 'string', enum: ['SIMPLE', 'SCRIPT'] }
+  // --- Simple: narrow `type` to ['SIMPLE'] only ----------------------------
+  const patchedSimpleType = { type: 'string', enum: ['SIMPLE'] }
+  const upstreamLumpedSimpleType = { type: 'string', enum: ['SIMPLE', 'SCRIPT'] }
   const simpleProps = (simple.properties ?? {}) as Record<string, unknown>
-  if (simpleProps.type === undefined) {
-    simpleProps.type = patchedTypeProp
-  } else if (!isDeepStrictEqual(simpleProps.type, patchedTypeProp)) {
+  if (simpleProps.type === undefined || isDeepStrictEqual(simpleProps.type, upstreamLumpedSimpleType)) {
+    simpleProps.type = structuredClone(patchedSimpleType)
+  } else if (!isDeepStrictEqual(simpleProps.type, patchedSimpleType)) {
     errors.push(
-      'CF configuration patch: SimpleCalculatedFieldConfiguration.type no longer matches the patched shape — upstream may have changed it; review/remove patchCalculatedFieldConfiguration',
+      'CF configuration patch: SimpleCalculatedFieldConfiguration.type is in an unknown shape — upstream may have changed it; review/remove patchCalculatedFieldConfiguration',
     )
   }
   simple.properties = simpleProps
@@ -310,78 +643,109 @@ function patchCalculatedFieldConfiguration(
   if (!simpleRequired.includes('type')) simpleRequired.push('type')
   simple.required = simpleRequired
 
-  /*
-   * Synthesize the PROPAGATION variant. Fields mirror the ThingsBoard wire
-   * payload; `expression` may be null for a pass-through propagation.
-   */
-  const propagationSchema: Schema = {
-    type: 'object',
-    properties: {
-      type: { type: 'string', enum: ['PROPAGATION'] },
-      arguments: {
-        type: 'object',
-        additionalProperties: { $ref: '#/components/schemas/Argument' },
-        minProperties: 1,
-      },
-      expression: { type: ['string', 'null'] },
-      output: {
-        oneOf: [
-          { $ref: '#/components/schemas/AttributesOutput' },
-          { $ref: '#/components/schemas/TimeSeriesOutput' },
-        ],
-      },
-      relation: {
-        type: 'object',
-        properties: {
-          direction: { type: 'string', enum: ['TO', 'FROM'] },
-          relationType: { type: 'string' },
-        },
-        required: ['direction', 'relationType'],
-      },
-      applyExpressionToResolvedArguments: { type: 'boolean' },
-    },
-    required: ['type', 'arguments', 'output', 'relation', 'applyExpressionToResolvedArguments'],
-  }
-  if (schemas.PropagationCalculatedFieldConfiguration === undefined) {
-    schemas.PropagationCalculatedFieldConfiguration = propagationSchema
-  } else if (!isDeepStrictEqual(schemas.PropagationCalculatedFieldConfiguration, propagationSchema)) {
-    errors.push(
-      'CF configuration patch: PropagationCalculatedFieldConfiguration no longer matches the patched shape — upstream may have added its own; review/remove patchCalculatedFieldConfiguration',
-    )
+  // --- Synthesize Script, Propagation, Alarm ------------------------------
+  // For each: missing → install ours; matches our shape → idempotent no-op;
+  // anything else → error (upstream may have added its own — review).
+  const synthesized: ReadonlyArray<readonly [string, () => Schema]> = [
+    // CF configuration variants
+    ['ScriptCalculatedFieldConfiguration', buildScriptSchema],
+    ['PropagationCalculatedFieldConfiguration', buildPropagationSchema],
+    ['AlarmCalculatedFieldConfiguration', buildAlarmSchema],
+    ['RelatedEntitiesAggregationCalculatedFieldConfiguration', buildRelatedEntitiesAggregationSchema],
+    ['EntityAggregationCalculatedFieldConfiguration', buildEntityAggregationSchema],
+    // Aggregation dependency tree — referenced by the two aggregation CF configs
+    ['AggKeyInput', buildAggKeyInputSchema],
+    ['AggFunctionInput', buildAggFunctionInputSchema],
+    ['AggMetric', buildAggMetricSchema],
+    ['BaseAggInterval', buildBaseAggIntervalSchema],
+    ['HourInterval', buildHourIntervalSchema],
+    ['DayInterval', buildDayIntervalSchema],
+    ['WeekInterval', buildWeekIntervalSchema],
+    ['WeekSunSatInterval', buildWeekSunSatIntervalSchema],
+    ['MonthInterval', buildMonthIntervalSchema],
+    ['QuarterInterval', buildQuarterIntervalSchema],
+    ['YearInterval', buildYearIntervalSchema],
+    ['CustomInterval', buildCustomIntervalSchema],
+    ['Watermark', buildWatermarkSchema],
+  ]
+  for (const [name, build] of synthesized) {
+    const expected = build()
+    if (schemas[name] === undefined) {
+      schemas[name] = expected
+    } else if (!isDeepStrictEqual(schemas[name], expected)) {
+      errors.push(
+        `CF configuration patch: ${name} exists but doesn't match the patched shape — upstream may have added its own; reconcile patchCalculatedFieldConfiguration with upstream`,
+      )
+    }
   }
 
-  // Replace the flat `$ref` on each CF schema's `configuration` with the union.
+  // --- Rewrite `configuration` on every CalculatedField* parent -----------
   const configuration = {
     oneOf: [
       { $ref: '#/components/schemas/SimpleCalculatedFieldConfiguration' },
+      { $ref: '#/components/schemas/ScriptCalculatedFieldConfiguration' },
       { $ref: '#/components/schemas/PropagationCalculatedFieldConfiguration' },
+      { $ref: '#/components/schemas/AlarmCalculatedFieldConfiguration' },
+      { $ref: '#/components/schemas/RelatedEntitiesAggregationCalculatedFieldConfiguration' },
+      { $ref: '#/components/schemas/EntityAggregationCalculatedFieldConfiguration' },
     ],
     discriminator: {
       propertyName: 'type',
       mapping: {
         SIMPLE: '#/components/schemas/SimpleCalculatedFieldConfiguration',
-        SCRIPT: '#/components/schemas/SimpleCalculatedFieldConfiguration',
+        SCRIPT: '#/components/schemas/ScriptCalculatedFieldConfiguration',
         PROPAGATION: '#/components/schemas/PropagationCalculatedFieldConfiguration',
+        ALARM: '#/components/schemas/AlarmCalculatedFieldConfiguration',
+        RELATED_ENTITIES_AGGREGATION: '#/components/schemas/RelatedEntitiesAggregationCalculatedFieldConfiguration',
+        ENTITY_AGGREGATION: '#/components/schemas/EntityAggregationCalculatedFieldConfiguration',
       },
     },
   }
-  const brokenUpstreamConfiguration = {
-    $ref: '#/components/schemas/SimpleCalculatedFieldConfiguration',
-  }
-  for (const name of ['CalculatedField', 'CalculatedFieldInfo']) {
-    const props = schemas[name]?.properties as Record<string, unknown> | undefined
+  // Shapes we recognize as "upstream's current attempt that we want to replace":
+  //   (a) flat `$ref` to Simple — the historical broken shape
+  //   (b) 2-variant oneOf (Simple + Propagation) with SCRIPT lumped into Simple
+  //       — the current 4.3.1 PE shape; upstream caught up on Propagation but
+  //       still doesn't split SCRIPT.
+  const upstreamShapes = [
+    { $ref: '#/components/schemas/SimpleCalculatedFieldConfiguration' },
+    {
+      oneOf: [
+        { $ref: '#/components/schemas/SimpleCalculatedFieldConfiguration' },
+        { $ref: '#/components/schemas/PropagationCalculatedFieldConfiguration' },
+      ],
+      discriminator: {
+        propertyName: 'type',
+        mapping: {
+          SIMPLE: '#/components/schemas/SimpleCalculatedFieldConfiguration',
+          SCRIPT: '#/components/schemas/SimpleCalculatedFieldConfiguration',
+          PROPAGATION: '#/components/schemas/PropagationCalculatedFieldConfiguration',
+        },
+      },
+    },
+  ]
+  // Apply to every shape variant of CalculatedField — the read AND write paths
+  // both need the discriminated union. Variants missing from the spec are
+  // logged (hey-api synthesizes `*Writable` downstream when omitted); see
+  // CLAUDE.md "Writable / Info shape skew".
+  const cfShapeResult = forEachShape('CalculatedField', schemas, (parent, name) => {
+    const props = parent.properties as Record<string, unknown> | undefined
     if (!props?.configuration) {
       errors.push(`CF configuration patch: ${name}.properties.configuration not found`)
-      continue
+      return 'already-patched'
     }
-    if (isDeepStrictEqual(props.configuration, brokenUpstreamConfiguration)) {
+    if (isDeepStrictEqual(props.configuration, configuration)) {
+      return 'already-patched'
+    }
+    if (upstreamShapes.some(s => isDeepStrictEqual(props.configuration, s))) {
       props.configuration = structuredClone(configuration)
-    } else if (!isDeepStrictEqual(props.configuration, configuration)) {
-      errors.push(
-        `CF configuration patch: ${name}.configuration no longer matches either the broken upstream shape or this patch — upstream may have fixed this; review/remove patchCalculatedFieldConfiguration`,
-      )
+      return 'patched'
     }
-  }
+    errors.push(
+      `CF configuration patch: ${name}.configuration is in an unrecognized shape — upstream may have evolved; review/extend the upstreamShapes list in patchCalculatedFieldConfiguration`,
+    )
+    return 'already-patched'
+  })
+  logShapeResult('CalculatedField.configuration', cfShapeResult)
 }
 
 const spec: Spec = JSON.parse(readFileSync(SPEC_PATH, 'utf8'))

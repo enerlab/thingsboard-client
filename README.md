@@ -6,12 +6,42 @@ Generated from the official ThingsBoard OpenAPI 3.1 spec using [@hey-api/openapi
 
 ## Features
 
-- Full ThingsBoard Community Edition REST API coverage
+- Full ThingsBoard REST API coverage, generated from a TB Professional Edition spec (PE is a superset of CE — CE-only consumers will see SDK functions for PE-only endpoints that 404 on their server)
 - `login()` / `logout()` helpers (not in the OpenAPI spec, provided manually)
 - TypeScript types for all endpoints, request bodies, and responses
 - Zod schemas for runtime validation at API boundaries
 - Native `fetch` — works in Node.js 20+, Bun, Deno, and browsers
 - Tree-shakeable — import only the endpoints you use for minimal bundle size
+
+## Versioning
+
+The package version mirrors the targeted ThingsBoard server version, plus a prerelease tag that pins the exact upstream spec build:
+
+```
+MAJOR.MINOR.PATCH-<edition>.<build>.<client-revision>
+```
+
+- **`MAJOR.MINOR.PATCH`** matches the TB server version exactly (e.g. `4.3.1`).
+- **`<edition>`** is the TB edition the spec was sourced from: `pe` or `ce`.
+- **`<build>`** is TB's build counter — the trailing segment in TB's `info.version` (e.g. `4.3.1.1PE` → `1`).
+- **`<client-revision>`** increments for client-only changes (codegen tweaks, patch-script updates, helper additions) against the same upstream spec build. Starts at `0` per new spec fetch.
+
+Bare versions like `4.3.1` are **never published** — every release carries the full prerelease tag, so the upstream source is always visible. Consumers using `^4.3.1` will not pick up our prereleases by accident; pin explicitly, e.g.:
+
+```jsonc
+"@enerlab/thingsboard-client": "4.3.1-pe.1.0"
+```
+
+| Event | Version |
+|---|---|
+| First client built from TB `4.3.1.1PE` | `4.3.1-pe.1.0` |
+| Client-only fix; same spec build | `4.3.1-pe.1.1` |
+| Re-fetched against TB `4.3.1.2PE` | `4.3.1-pe.2.0` |
+| TB ships 4.3.2 (build 0, PE) | `4.3.2-pe.0.0` |
+
+### Supported TB versions / branch layout
+
+`main` tracks the latest TB minor the package targets. When the package moves to a new TB minor, a `release/<MAJOR>.<MINOR>.x` branch is cut off `main` first; client-only fixes can then be backported onto that branch and published as new `-N` revisions for the older line. Currently only `main` exists — it targets TB 4.3.x.
 
 ## Installation
 
@@ -117,7 +147,8 @@ if (result.success) {
 pnpm install
 
 # Download the ThingsBoard OpenAPI spec
-# Defaults to https://demo.thingsboard.io — override with THINGSBOARD_SPEC_URL
+# Default URL is https://demo.thingsboard.io (Community Edition).
+# Override with THINGSBOARD_SPEC_URL to target a PE instance or a specific TB version.
 pnpm fetch-spec
 
 # Generate the TypeScript client

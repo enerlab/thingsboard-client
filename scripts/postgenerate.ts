@@ -129,7 +129,65 @@ function fixTelemetryResponseTypes() {
 }
 
 /**
- * Transform 4: Append AttributeEntry type to types.gen.ts.
+ * Transform 4: Annotate deeply-nested Zod schemas with their precise TS types.
+ *
+ * Some PE schemas are deep enough that TypeScript can't serialize the inferred
+ * type into .d.ts and errors with TS7056. We annotate each affected root schema
+ * with `z.ZodType<TypeName>` so the *external* type is flat and precise:
+ *   - `z.infer<typeof zX>` resolves to the corresponding `X` from `types.gen`
+ *     (not `any`).
+ *   - `zX.parse(data)` returns `X`.
+ *   - Downstream `= zX` references inherit the simple type, not the unbounded
+ *     inferred one.
+ *
+ * The `@ts-ignore` is needed because the annotation triggers an assignability
+ * check from the deeply-nested inferred type to `z.ZodType<TypeName>`, and a
+ * few of these schemas contain `z.union([.and(...), .and(...)])` shapes whose
+ * assignability walk itself trips TS2589 ("excessively deep"). The runtime
+ * shape is unchanged; only the declared type is overridden.
+ *
+ * If upstream renames any of these schemas, the matching .replace() will warn
+ * with 0 matches — re-evaluate then.
+ */
+function annotateComplexSchemas() {
+  let zod = readFileSync(ZOD_PATH, 'utf8')
+
+  // zod-schema → corresponding TS type from types.gen.ts
+  const schemas: ReadonlyArray<readonly [string, string]> = [
+    // Report* — deep due to inline allOf intersections in template configs
+    ['zReport', 'Report'],
+    ['zReportRequest', 'ReportRequest'],
+    ['zReportTemplate', 'ReportTemplate'],
+    ['zReportRequestWritable', 'ReportRequestWritable'],
+    ['zReportTemplateWritable', 'ReportTemplateWritable'],
+    // EntityDataDiff — deep due to 9-way unions of export data types on two fields
+    ['zEntityDataDiff', 'EntityDataDiff'],
+    ['zEntityDataDiffWritable', 'EntityDataDiffWritable'],
+  ]
+
+  // Add the type-only import right after the `import * as z from 'zod';` line.
+  // Idempotent: only inserts if not already present.
+  const importMarker = "import * as z from 'zod';"
+  const typesImport = `import type { ${schemas.map(([, t]) => t).join(', ')} } from './types.gen';`
+  if (!zod.includes(typesImport)) {
+    zod = zod.replace(importMarker, `${importMarker}\n${typesImport}`)
+    console.log('postgenerate: added type-only import for deeply-nested types in zod.gen.ts')
+  }
+
+  for (const [name, typeName] of schemas) {
+    zod = replace(
+      zod,
+      `export const ${name} = z.object({`,
+      `// @ts-ignore TS2589 — annotation flattens the declared type; see scripts/postgenerate.ts annotateComplexSchemas\nexport const ${name}: z.ZodType<${typeName}> = z.object({`,
+      `annotate ${name} as z.ZodType<${typeName}>`,
+    )
+  }
+
+  writeFileSync(ZOD_PATH, zod, 'utf8')
+}
+
+/**
+ * Transform 5: Append AttributeEntry type to types.gen.ts.
  */
 function addAttributeEntryType() {
   let types = readFileSync(TYPES_PATH, 'utf8')
@@ -148,4 +206,5 @@ function addAttributeEntryType() {
 makeOptionalFieldsNullable()  // must run first (patches .optional() in zod)
 fixTsValueType()
 fixTelemetryResponseTypes()
+annotateComplexSchemas()
 addAttributeEntryType()
