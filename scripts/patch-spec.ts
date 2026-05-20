@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 const SPEC_PATH = resolve(import.meta.dirname, '..', 'spec', 'thingsboard-openapi.json')
 
@@ -253,6 +254,136 @@ interface Spec {
   [key: string]: unknown
 }
 
+/**
+ * ThingsBoard's spec types `CalculatedField.configuration` as a flat `$ref` to
+ * `SimpleCalculatedFieldConfiguration` — it never models the PROPAGATION
+ * variant, even though `PROPAGATION` is in the `CalculatedField.type` enum.
+ * Codegen then can't represent a PROPAGATION calculated field at all.
+ *
+ * Synthesize the missing `PropagationCalculatedFieldConfiguration` schema and
+ * turn `configuration` into a `oneOf` discriminated on `type`.
+ */
+function patchCalculatedFieldConfiguration(
+  schemas: Record<string, Schema>,
+  errors: string[],
+): void {
+  const simple = schemas.SimpleCalculatedFieldConfiguration
+  if (!simple) {
+    errors.push('CF configuration patch: SimpleCalculatedFieldConfiguration not found')
+    return
+  }
+
+  /*
+   * Every schema this patch references must exist; if upstream renames one of
+   * them, openapi-ts would silently emit `unknown` for that field and a future
+   * PROPAGATION user gets a useless type. Fail loud instead.
+   */
+  for (const dep of ['Argument', 'AttributesOutput', 'TimeSeriesOutput']) {
+    if (!schemas[dep]) {
+      errors.push(`CF configuration patch: dependency schema "${dep}" not found`)
+    }
+  }
+
+  /*
+   * Each gated mutation below has three valid states:
+   *   - upstream still has the broken shape  → apply the patch
+   *   - we already applied the patch         → idempotent no-op (re-runs)
+   *   - anything else                        → upstream changed; error out so
+   *                                            the maintainer reviews/removes
+   *                                            this patch instead of silently
+   *                                            clobbering upstream's fix.
+   */
+
+  // The discriminator property must exist on every `oneOf` member. SIMPLE and
+  // SCRIPT share `SimpleCalculatedFieldConfiguration`, so `type` covers both.
+  const patchedTypeProp = { type: 'string', enum: ['SIMPLE', 'SCRIPT'] }
+  const simpleProps = (simple.properties ?? {}) as Record<string, unknown>
+  if (simpleProps.type === undefined) {
+    simpleProps.type = patchedTypeProp
+  } else if (!isDeepStrictEqual(simpleProps.type, patchedTypeProp)) {
+    errors.push(
+      'CF configuration patch: SimpleCalculatedFieldConfiguration.type no longer matches the patched shape — upstream may have changed it; review/remove patchCalculatedFieldConfiguration',
+    )
+  }
+  simple.properties = simpleProps
+  const simpleRequired = (simple.required ?? []) as string[]
+  if (!simpleRequired.includes('type')) simpleRequired.push('type')
+  simple.required = simpleRequired
+
+  /*
+   * Synthesize the PROPAGATION variant. Fields mirror the ThingsBoard wire
+   * payload; `expression` may be null for a pass-through propagation.
+   */
+  const propagationSchema: Schema = {
+    type: 'object',
+    properties: {
+      type: { type: 'string', enum: ['PROPAGATION'] },
+      arguments: {
+        type: 'object',
+        additionalProperties: { $ref: '#/components/schemas/Argument' },
+        minProperties: 1,
+      },
+      expression: { type: ['string', 'null'] },
+      output: {
+        oneOf: [
+          { $ref: '#/components/schemas/AttributesOutput' },
+          { $ref: '#/components/schemas/TimeSeriesOutput' },
+        ],
+      },
+      relation: {
+        type: 'object',
+        properties: {
+          direction: { type: 'string', enum: ['TO', 'FROM'] },
+          relationType: { type: 'string' },
+        },
+        required: ['direction', 'relationType'],
+      },
+      applyExpressionToResolvedArguments: { type: 'boolean' },
+    },
+    required: ['type', 'arguments', 'output', 'relation', 'applyExpressionToResolvedArguments'],
+  }
+  if (schemas.PropagationCalculatedFieldConfiguration === undefined) {
+    schemas.PropagationCalculatedFieldConfiguration = propagationSchema
+  } else if (!isDeepStrictEqual(schemas.PropagationCalculatedFieldConfiguration, propagationSchema)) {
+    errors.push(
+      'CF configuration patch: PropagationCalculatedFieldConfiguration no longer matches the patched shape — upstream may have added its own; review/remove patchCalculatedFieldConfiguration',
+    )
+  }
+
+  // Replace the flat `$ref` on each CF schema's `configuration` with the union.
+  const configuration = {
+    oneOf: [
+      { $ref: '#/components/schemas/SimpleCalculatedFieldConfiguration' },
+      { $ref: '#/components/schemas/PropagationCalculatedFieldConfiguration' },
+    ],
+    discriminator: {
+      propertyName: 'type',
+      mapping: {
+        SIMPLE: '#/components/schemas/SimpleCalculatedFieldConfiguration',
+        SCRIPT: '#/components/schemas/SimpleCalculatedFieldConfiguration',
+        PROPAGATION: '#/components/schemas/PropagationCalculatedFieldConfiguration',
+      },
+    },
+  }
+  const brokenUpstreamConfiguration = {
+    $ref: '#/components/schemas/SimpleCalculatedFieldConfiguration',
+  }
+  for (const name of ['CalculatedField', 'CalculatedFieldInfo']) {
+    const props = schemas[name]?.properties as Record<string, unknown> | undefined
+    if (!props?.configuration) {
+      errors.push(`CF configuration patch: ${name}.properties.configuration not found`)
+      continue
+    }
+    if (isDeepStrictEqual(props.configuration, brokenUpstreamConfiguration)) {
+      props.configuration = structuredClone(configuration)
+    } else if (!isDeepStrictEqual(props.configuration, configuration)) {
+      errors.push(
+        `CF configuration patch: ${name}.configuration no longer matches either the broken upstream shape or this patch — upstream may have fixed this; review/remove patchCalculatedFieldConfiguration`,
+      )
+    }
+  }
+}
+
 const spec: Spec = JSON.parse(readFileSync(SPEC_PATH, 'utf8'))
 const schemas = spec.components.schemas
 
@@ -288,6 +419,8 @@ for (const [parentName, mapping] of Object.entries(DISCRIMINATOR_MAPPINGS)) {
   schema.discriminator.mapping = mapping
   patched++
 }
+
+patchCalculatedFieldConfiguration(schemas, errors)
 
 if (errors.length > 0) {
   console.error('patch-spec: ERRORS:')
