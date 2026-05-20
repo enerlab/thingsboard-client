@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 const SPEC_PATH = resolve(import.meta.dirname, '..', 'spec', 'thingsboard-openapi.json')
 
@@ -272,10 +273,38 @@ function patchCalculatedFieldConfiguration(
     return
   }
 
+  /*
+   * Every schema this patch references must exist; if upstream renames one of
+   * them, openapi-ts would silently emit `unknown` for that field and a future
+   * PROPAGATION user gets a useless type. Fail loud instead.
+   */
+  for (const dep of ['Argument', 'AttributesOutput', 'TimeSeriesOutput']) {
+    if (!schemas[dep]) {
+      errors.push(`CF configuration patch: dependency schema "${dep}" not found`)
+    }
+  }
+
+  /*
+   * Each gated mutation below has three valid states:
+   *   - upstream still has the broken shape  → apply the patch
+   *   - we already applied the patch         → idempotent no-op (re-runs)
+   *   - anything else                        → upstream changed; error out so
+   *                                            the maintainer reviews/removes
+   *                                            this patch instead of silently
+   *                                            clobbering upstream's fix.
+   */
+
   // The discriminator property must exist on every `oneOf` member. SIMPLE and
   // SCRIPT share `SimpleCalculatedFieldConfiguration`, so `type` covers both.
+  const patchedTypeProp = { type: 'string', enum: ['SIMPLE', 'SCRIPT'] }
   const simpleProps = (simple.properties ?? {}) as Record<string, unknown>
-  simpleProps.type ??= { type: 'string', enum: ['SIMPLE', 'SCRIPT'] }
+  if (simpleProps.type === undefined) {
+    simpleProps.type = patchedTypeProp
+  } else if (!isDeepStrictEqual(simpleProps.type, patchedTypeProp)) {
+    errors.push(
+      'CF configuration patch: SimpleCalculatedFieldConfiguration.type no longer matches the patched shape — upstream may have changed it; review/remove patchCalculatedFieldConfiguration',
+    )
+  }
   simple.properties = simpleProps
   const simpleRequired = (simple.required ?? []) as string[]
   if (!simpleRequired.includes('type')) simpleRequired.push('type')
@@ -285,7 +314,7 @@ function patchCalculatedFieldConfiguration(
    * Synthesize the PROPAGATION variant. Fields mirror the ThingsBoard wire
    * payload; `expression` may be null for a pass-through propagation.
    */
-  schemas.PropagationCalculatedFieldConfiguration ??= {
+  const propagationSchema: Schema = {
     type: 'object',
     properties: {
       type: { type: 'string', enum: ['PROPAGATION'] },
@@ -313,6 +342,13 @@ function patchCalculatedFieldConfiguration(
     },
     required: ['type', 'arguments', 'output', 'relation', 'applyExpressionToResolvedArguments'],
   }
+  if (schemas.PropagationCalculatedFieldConfiguration === undefined) {
+    schemas.PropagationCalculatedFieldConfiguration = propagationSchema
+  } else if (!isDeepStrictEqual(schemas.PropagationCalculatedFieldConfiguration, propagationSchema)) {
+    errors.push(
+      'CF configuration patch: PropagationCalculatedFieldConfiguration no longer matches the patched shape — upstream may have added its own; review/remove patchCalculatedFieldConfiguration',
+    )
+  }
 
   // Replace the flat `$ref` on each CF schema's `configuration` with the union.
   const configuration = {
@@ -329,12 +365,21 @@ function patchCalculatedFieldConfiguration(
       },
     },
   }
+  const brokenUpstreamConfiguration = {
+    $ref: '#/components/schemas/SimpleCalculatedFieldConfiguration',
+  }
   for (const name of ['CalculatedField', 'CalculatedFieldInfo']) {
     const props = schemas[name]?.properties as Record<string, unknown> | undefined
-    if (props?.configuration) {
-      props.configuration = structuredClone(configuration)
-    } else {
+    if (!props?.configuration) {
       errors.push(`CF configuration patch: ${name}.properties.configuration not found`)
+      continue
+    }
+    if (isDeepStrictEqual(props.configuration, brokenUpstreamConfiguration)) {
+      props.configuration = structuredClone(configuration)
+    } else if (!isDeepStrictEqual(props.configuration, configuration)) {
+      errors.push(
+        `CF configuration patch: ${name}.configuration no longer matches either the broken upstream shape or this patch — upstream may have fixed this; review/remove patchCalculatedFieldConfiguration`,
+      )
     }
   }
 }
