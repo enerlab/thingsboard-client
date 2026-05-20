@@ -56,12 +56,9 @@ describe('Zod schema contract tests', () => {
 			expect(result.success).toBe(true)
 		})
 
-		it('rejects a device without name', () => {
+		it('rejects a device without deviceProfileId', () => {
 			const result = zDevice.safeParse({
-				deviceProfileId: {
-					id: DEVICE_PROFILE_UUID,
-					entityType: 'DEVICE_PROFILE',
-				},
+				name: 'Sensor',
 			})
 			expect(result.success).toBe(false)
 		})
