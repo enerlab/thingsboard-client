@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+	zCalculatedFieldWritable,
 	zDevice,
 	zCustomer,
 	zAsset,
@@ -252,6 +253,67 @@ describe('Zod schema contract tests', () => {
 		it('still accepts omitted optional fields', () => {
 			const result = zAsset.safeParse({
 				name: 'Building A',
+			})
+			expect(result.success).toBe(true)
+		})
+	})
+
+	// Regression: IMMEDIATE output strategies used to make `configuration`
+	// unmergable (`z.unknown()` base + `z.coerce.bigint()` ttl collided in the
+	// intersection and `safeParse` *threw*). Fixed by giving `OutputStrategy` a
+	// concrete shape in patch-spec. See ENE-2773.
+	describe('CalculatedField IMMEDIATE output strategy (ENE-2773)', () => {
+		const config = zCalculatedFieldWritable.shape.configuration
+
+		it('accepts a SCRIPT CF with a TIME_SERIES IMMEDIATE strategy', () => {
+			const result = config.safeParse({
+				type: 'SCRIPT',
+				arguments: { x: { refEntityKey: { key: 'x', type: 'TS_ROLLING' }, timeWindow: 3_600_000 } },
+				expression: 'return {}',
+				output: {
+					type: 'TIME_SERIES',
+					strategy: {
+						type: 'IMMEDIATE',
+						ttl: 0,
+						saveTimeSeries: true,
+						saveLatest: true,
+						sendWsUpdate: true,
+						processCfs: true,
+					},
+				},
+			})
+			expect(result.success).toBe(true)
+		})
+
+		it('accepts a SIMPLE CF with an ATTRIBUTES IMMEDIATE strategy', () => {
+			const result = config.safeParse({
+				type: 'SIMPLE',
+				arguments: { x: { refEntityKey: { key: 'x', type: 'TS_LATEST' } } },
+				output: {
+					type: 'ATTRIBUTES',
+					scope: 'SERVER_SCOPE',
+					strategy: {
+						type: 'IMMEDIATE',
+						sendAttributesUpdatedNotification: false,
+						updateAttributesOnlyOnValueChange: true,
+						saveAttribute: true,
+						sendWsUpdate: true,
+						processCfs: true,
+					},
+				},
+			})
+			expect(result.success).toBe(true)
+		})
+
+		it('accepts a TIME_SERIES RULE_CHAIN strategy', () => {
+			const result = config.safeParse({
+				type: 'SCRIPT',
+				arguments: { x: { refEntityKey: { key: 'x', type: 'TS_LATEST' } } },
+				expression: 'return {}',
+				output: {
+					type: 'TIME_SERIES',
+					strategy: { type: 'RULE_CHAIN' },
+				},
 			})
 			expect(result.success).toBe(true)
 		})

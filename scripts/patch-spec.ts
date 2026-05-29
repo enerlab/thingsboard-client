@@ -384,6 +384,44 @@ function patchCalculatedFieldConfiguration(
   }
 }
 
+/**
+ * ThingsBoard's spec emits `OutputStrategy` — the abstract base of the
+ * TimeSeries/Attributes output strategies — as an empty schema `{}`. openapi-ts
+ * turns `{}` into `z.unknown()`, so the generated `zOutput.strategy` (a `$ref`
+ * to it) keeps its input verbatim. The concrete `TimeSeriesOutput` /
+ * `AttributesOutput` then re-declare `strategy` through an `allOf` (→ a zod
+ * intersection), and zod parses the same `strategy` on both sides: the
+ * `z.unknown()` branch keeps `ttl` as a number, the concrete branch coerces it
+ * to a bigint (int64), and `0 !== 0n` makes the intersection unmergable —
+ * `safeParse` throws `Unmergable intersection. Error path: ["strategy","ttl"]`.
+ *
+ * Give the base a minimal concrete shape (`type` only, mirroring
+ * `TimeSeriesOutputStrategy` / `AttributesOutputStrategy`) so it generates
+ * `z.object({ type: z.string() })`. An object schema strips the extra keys on
+ * the base branch, leaving nothing for the intersection to collide on, while
+ * the concrete branch still carries the full coerced strategy. Tracked in
+ * ENE-2773; remove once upstream gives `OutputStrategy` a real shape.
+ */
+function patchOutputStrategy(schemas: Record<string, Schema>, errors: string[]): void {
+  const patched: Schema = {
+    type: 'object',
+    properties: { type: { type: 'string' } },
+    required: ['type'],
+  }
+  const current = schemas.OutputStrategy
+  if (current === undefined) {
+    errors.push('OutputStrategy patch: schema not found')
+    return
+  }
+  if (isDeepStrictEqual(current, {})) {
+    schemas.OutputStrategy = patched
+  } else if (!isDeepStrictEqual(current, patched)) {
+    errors.push(
+      'OutputStrategy patch: schema no longer matches the empty upstream shape or this patch — upstream may have fixed it; review/remove patchOutputStrategy',
+    )
+  }
+}
+
 const spec: Spec = JSON.parse(readFileSync(SPEC_PATH, 'utf8'))
 const schemas = spec.components.schemas
 
@@ -421,6 +459,7 @@ for (const [parentName, mapping] of Object.entries(DISCRIMINATOR_MAPPINGS)) {
 }
 
 patchCalculatedFieldConfiguration(schemas, errors)
+patchOutputStrategy(schemas, errors)
 
 if (errors.length > 0) {
   console.error('patch-spec: ERRORS:')

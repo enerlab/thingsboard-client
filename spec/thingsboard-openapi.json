@@ -35376,7 +35376,17 @@
           "type"
         ]
       },
-      "OutputStrategy": {},
+      "OutputStrategy": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
       "ReferencedEntityKey": {
         "type": "object",
         "properties": {
