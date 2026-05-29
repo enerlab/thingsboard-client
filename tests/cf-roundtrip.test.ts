@@ -124,3 +124,100 @@ describe('CalculatedField round-trip per variant', () => {
     expect(r.success).toBe(false)
   })
 })
+
+/**
+ * The variant fixtures above use a bare `{ type }` output, so they never
+ * exercise an output strategy. The IMMEDIATE strategies carry an int64 `ttl`
+ * and used to make `configuration` unmergable: the empty `OutputStrategy` base
+ * generated `z.unknown()`, which collided with the coerced bigint `ttl` in the
+ * `allOf` intersection, so `safeParse` threw `Unmergable intersection`.
+ */
+describe('CalculatedField output strategy', () => {
+  it('TIME_SERIES IMMEDIATE (with ttl)', () => {
+    const cf: CalculatedField = {
+      entityId: ENTITY_ID,
+      type: 'SCRIPT',
+      configuration: {
+        type: 'SCRIPT',
+        arguments: { x: ARGUMENT },
+        expression: 'return x',
+        output: {
+          type: 'TIME_SERIES',
+          strategy: {
+            type: 'IMMEDIATE',
+            ttl: 0,
+            saveTimeSeries: true,
+            saveLatest: true,
+            sendWsUpdate: true,
+            processCfs: true,
+          },
+        },
+      },
+    }
+    const r = roundTrip(cf)
+    expect(r.success, r.success ? '' : JSON.stringify(r.error.issues)).toBe(true)
+  })
+
+  it('ATTRIBUTES IMMEDIATE', () => {
+    const cf: CalculatedField = {
+      entityId: ENTITY_ID,
+      type: 'SIMPLE',
+      configuration: {
+        type: 'SIMPLE',
+        arguments: { x: ARGUMENT },
+        expression: 'x',
+        output: {
+          type: 'ATTRIBUTES',
+          scope: 'SERVER_SCOPE',
+          strategy: {
+            type: 'IMMEDIATE',
+            sendAttributesUpdatedNotification: false,
+            updateAttributesOnlyOnValueChange: true,
+            saveAttribute: true,
+            sendWsUpdate: true,
+            processCfs: true,
+          },
+        },
+      },
+    }
+    const r = roundTrip(cf)
+    expect(r.success, r.success ? '' : JSON.stringify(r.error.issues)).toBe(true)
+  })
+
+  it('TIME_SERIES RULE_CHAIN', () => {
+    const cf: CalculatedField = {
+      entityId: ENTITY_ID,
+      type: 'SCRIPT',
+      configuration: {
+        type: 'SCRIPT',
+        arguments: { x: ARGUMENT },
+        expression: 'return x',
+        output: {
+          type: 'TIME_SERIES',
+          strategy: { type: 'RULE_CHAIN' },
+        },
+      },
+    }
+    const r = roundTrip(cf)
+    expect(r.success, r.success ? '' : JSON.stringify(r.error.issues)).toBe(true)
+  })
+
+  it('ATTRIBUTES RULE_CHAIN', () => {
+    const cf: CalculatedField = {
+      entityId: ENTITY_ID,
+      type: 'SIMPLE',
+      configuration: {
+        type: 'SIMPLE',
+        arguments: { x: ARGUMENT },
+        expression: 'x',
+        output: {
+          type: 'ATTRIBUTES',
+          scope: 'SERVER_SCOPE',
+          strategy: { type: 'RULE_CHAIN' },
+        },
+      },
+    }
+    const r = roundTrip(cf)
+    expect(r.success, r.success ? '' : JSON.stringify(r.error.issues)).toBe(true)
+  })
+})
