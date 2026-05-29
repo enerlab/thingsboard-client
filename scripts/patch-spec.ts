@@ -748,6 +748,144 @@ function patchCalculatedFieldConfiguration(
   logShapeResult('CalculatedField.configuration', cfShapeResult)
 }
 
+/**
+ * TB's spec types `requestBody.content.application/json.schema` as `{type:"string"}`
+ * for endpoints that actually accept a JSON OBJECT body on the wire. The lie is
+ * visible in the request description ("JSON object", "JSON with the telemetry
+ * values", or a literal `{...}` example), but the schema says `string` — so
+ * hey-api generates `body: string`, and `createConfig`'s default
+ * `jsonBodySerializer` (`JSON.stringify(body)`) then runs on that string,
+ * producing a JSON-encoded string literal on the wire (e.g. `"{\"k\":\"v\"}"`).
+ * TB rejects with HTTP 400 `Request is not a JSON object`.
+ *
+ * Replace the schema with the on-the-wire shape so the generated type is an
+ * object whose values are precise (`JsonValue`, recursive) and the default
+ * serializer produces correct JSON. Avoids `unknown` in the published surface.
+ *
+ * ## Inclusion criterion
+ *
+ * Allowlist only endpoints whose upstream description is unambiguous about a
+ * JSON-object body — either says "JSON object" / "JSON with ..." or shows a
+ * `{...}` example. Endpoints with empty descriptions (`updateSecretValue`,
+ * `updateApiKeyDescription`, `updateCustomMenuName`, `updateSecretDescription`,
+ * the rule-engine / RPC handler variants, `claimDevice`, etc.) are intentionally
+ * left alone — some of them genuinely accept a primitive string body
+ * (Spring `@RequestBody String`), and patching blindly would break those
+ * callers. Opt in here only after verifying TB behavior for the endpoint.
+ */
+const JSON_OBJECT_BODY_OPERATIONS: ReadonlySet<string> = new Set([
+  'postDeviceAttributes',
+  'postRpcRequest',
+  'provisionDevice',
+  'replyToCommand',
+  'saveDeviceAttributes',
+  'saveEntityAttributesV1',
+  'saveEntityAttributesV2',
+  'saveEntityTelemetry',
+  'saveEntityTelemetryWithTTL',
+])
+
+/**
+ * Recursive precise JSON value type. Used as the `additionalProperties` for
+ * the patched request bodies so the generated type is
+ * `Record<string, JsonValue>` instead of `Record<string, unknown>` — keeps
+ * the "no `unknown` in the published surface" invariant from CLAUDE.md.
+ */
+/*
+ * `null` is intentionally NOT in the union. TB rejects null attribute/telemetry
+ * values with HTTP 500 "Can't parse value: null" (verified against PE 4.3.1.1
+ * against POST /api/plugins/telemetry/DEVICE/{id}/attributes/SERVER_SCOPE,
+ * both for new keys and overwriting existing ones). Surfacing null at TS would
+ * mislead consumers — to remove an attribute, use `deleteEntityAttributes`.
+ */
+const JSON_VALUE_SCHEMA: Schema = {
+  description: 'Any TB-accepted JSON value: string, number, boolean, object, or array (recursive). `null` is rejected by TB.',
+  oneOf: [
+    { type: 'string' },
+    { type: 'number' },
+    { type: 'boolean' },
+    { type: 'array', items: { $ref: '#/components/schemas/JsonValue' } },
+    { type: 'object', additionalProperties: { $ref: '#/components/schemas/JsonValue' } },
+  ],
+}
+
+interface RequestBodyOperation {
+  operationId?: string
+  requestBody?: {
+    content?: {
+      'application/json'?: {
+        schema?: unknown
+      }
+    }
+  }
+}
+
+function patchJsonStringRequestBodies(spec: Spec, errors: string[]): void {
+  const schemas = spec.components.schemas
+  // Add JsonValue schema. Loud-fails if upstream introduces their own
+  // JsonValue with a different shape — surfaces the conflict so the
+  // maintainer can decide whether to keep ours, adopt upstream's, or rename.
+  const existingJsonValue = schemas.JsonValue
+  if (existingJsonValue === undefined) {
+    schemas.JsonValue = structuredClone(JSON_VALUE_SCHEMA)
+  } else if (isDeepStrictEqual(existingJsonValue, JSON_VALUE_SCHEMA)) {
+    // Idempotent re-run — already present in the patched shape, no-op.
+  } else {
+    errors.push(
+      `json-object body patch: schemas.JsonValue already exists in upstream with a different shape — review whether to keep this patch's version, adopt upstream's, or rename ours to avoid the collision`,
+    )
+  }
+  const wrongSchema = { type: 'string' }
+  const correctSchema = {
+    type: 'object',
+    additionalProperties: { $ref: '#/components/schemas/JsonValue' },
+  }
+  const paths = spec.paths as Record<string, Record<string, RequestBodyOperation>> | undefined
+  if (!paths) {
+    errors.push('json-object body patch: spec has no paths')
+    return
+  }
+  let patched = 0
+  let alreadyPatched = 0
+  const seen = new Set<string>()
+  for (const [pathStr, methods] of Object.entries(paths)) {
+    for (const [method, op] of Object.entries(methods)) {
+      if (typeof op !== 'object' || op === null) continue
+      const opId = op.operationId
+      if (!opId || !JSON_OBJECT_BODY_OPERATIONS.has(opId)) continue
+      seen.add(opId)
+      const slot = op.requestBody?.content?.['application/json']
+      if (!slot) {
+        errors.push(
+          `json-object body patch: ${method.toUpperCase()} ${pathStr} (${opId}) has no application/json content`,
+        )
+        continue
+      }
+      if (isDeepStrictEqual(slot.schema, correctSchema)) {
+        alreadyPatched++
+        continue
+      }
+      if (isDeepStrictEqual(slot.schema, wrongSchema)) {
+        slot.schema = structuredClone(correctSchema)
+        patched++
+        continue
+      }
+      errors.push(
+        `json-object body patch: ${method.toUpperCase()} ${pathStr} (${opId}) schema is in an unrecognized shape — upstream may have fixed it or changed it; review JSON_OBJECT_BODY_OPERATIONS`,
+      )
+    }
+  }
+  const missing = [...JSON_OBJECT_BODY_OPERATIONS].filter((opId) => !seen.has(opId))
+  if (missing.length > 0) {
+    errors.push(
+      `json-object body patch: operationIds in allowlist not found in spec: ${missing.join(', ')} — upstream may have renamed them; review JSON_OBJECT_BODY_OPERATIONS`,
+    )
+  }
+  console.log(
+    `patch-spec: JSON-object request bodies — patched: ${patched}, already-patched: ${alreadyPatched}`,
+  )
+}
+
 const spec: Spec = JSON.parse(readFileSync(SPEC_PATH, 'utf8'))
 const schemas = spec.components.schemas
 
@@ -785,6 +923,7 @@ for (const [parentName, mapping] of Object.entries(DISCRIMINATOR_MAPPINGS)) {
 }
 
 patchCalculatedFieldConfiguration(schemas, errors)
+patchJsonStringRequestBodies(spec, errors)
 
 if (errors.length > 0) {
   console.error('patch-spec: ERRORS:')

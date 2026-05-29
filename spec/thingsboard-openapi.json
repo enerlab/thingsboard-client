@@ -2269,7 +2269,10 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "string"
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                }
               }
             }
           },
@@ -2342,7 +2345,10 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "string"
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                }
               }
             }
           },
@@ -2497,7 +2503,10 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "string"
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                }
               }
             }
           },
@@ -2530,7 +2539,10 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "string"
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                }
               }
             }
           },
@@ -5207,7 +5219,10 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "string"
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                }
               }
             }
           },
@@ -5620,7 +5635,10 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "string"
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                }
               }
             }
           },
@@ -5725,7 +5743,10 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "string"
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                }
               }
             }
           },
@@ -5821,7 +5842,10 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "string"
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                }
               }
             }
           },
@@ -5908,7 +5932,10 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "string"
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                }
               }
             }
           },
@@ -64758,6 +64785,32 @@
         },
         "required": [
           "duration"
+        ]
+      },
+      "JsonValue": {
+        "description": "Any TB-accepted JSON value: string, number, boolean, object, or array (recursive). `null` is rejected by TB.",
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonValue"
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            }
+          }
         ]
       }
     },
