@@ -59,3 +59,9 @@ Some upstream-Java models look "wrong" but are intentional. Leave them alone:
 Package versions follow `MAJOR.MINOR.PATCH-<edition>.<build>.<client-revision>` — mirrors the TB server version with a prerelease tag pinning the exact upstream spec build (e.g. `4.3.1-pe.1.0` = TB `4.3.1.1PE`, first client revision). Bare versions like `4.3.1` are never published. Full details in README "Versioning".
 
 Branch model: `main` tracks the latest TB minor; older minors get `release/<MAJOR>.<MINOR>.x` branches cut on demand for backports.
+
+## Releasing
+
+Releases are **version-driven**, not tag-driven. To publish: bump `version` in `package.json` (in a PR) and merge to `main`. `.github/workflows/release.yml` runs on every push to `main`, compares `package.json` against npm, and publishes only when the version isn't already there — then pushes a `v<version>` tag for traceability. Non-bump merges are a clean no-op. Do not push `v*` tags by hand; the workflow owns tagging.
+
+Requirements: `NPM_TOKEN` repo secret must be an npm **Automation** token (2FA-exempt; a Granular/Classic token fails with `EOTP` under the org's 2FA-on-write policy). To retry a failed publish, bump the `<client-revision>` segment and merge again, or use the workflow's `workflow_dispatch` button.

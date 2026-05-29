@@ -1,12 +1,15 @@
 name: Release
 
+# Publishes whenever a merge to main lands a new package.json version.
+# Idempotent: every push to main runs, but the job only publishes when the
+# current version isn't already on npm — so non-bump merges are a clean no-op.
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+  workflow_dispatch: # manual re-run, e.g. to retry a failed publish
 
 permissions:
-  contents: read
+  contents: write # needed to push the git tag after a successful publish
   id-token: write
 
 jobs:
@@ -23,22 +26,60 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      - name: Read package version
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this version is already on npm
+        id: check
+        run: |
+          published="$(npm view "@enerlab/thingsboard-client@${{ steps.pkg.outputs.version }}" version 2>/dev/null || true)"
+          if [ -n "$published" ]; then
+            echo "Version ${{ steps.pkg.outputs.version }} already on npm — nothing to do."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version ${{ steps.pkg.outputs.version }} not on npm — will publish."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install dependencies
+        if: steps.check.outputs.publish == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Generate client
+        if: steps.check.outputs.publish == 'true'
         run: pnpm generate
 
       - name: Test
+        if: steps.check.outputs.publish == 'true'
         run: pnpm test
 
-      - name: Build
-        run: pnpm build
-
       - name: Type-check
+        if: steps.check.outputs.publish == 'true'
         run: pnpm typecheck
 
+      - name: Build
+        if: steps.check.outputs.publish == 'true'
+        run: pnpm build
+
       - name: Publish to npm
+        if: steps.check.outputs.publish == 'true'
         run: pnpm publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Tag for traceability only after a successful publish. Skipped if the tag
+      # already exists (e.g. a stale tag from an earlier failed publish attempt)
+      # so it never turns an otherwise-successful release red.
+      - name: Tag release
+        if: steps.check.outputs.publish == 'true'
+        run: |
+          tag="v${{ steps.pkg.outputs.version }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists — skipping."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" -m "Release $tag"
+            git push origin "$tag"
+          fi
