@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
 	zDevice,
 	zCustomer,
+	zGetCustomerByIdResponse,
 	zAsset,
 	zDeviceCredentials,
 	zEntityTypeFilter,
@@ -101,6 +102,24 @@ describe('Zod schema contract tests', () => {
 		it('rejects a customer without title', () => {
 			const result = zCustomer.safeParse({ email: 'a@b.com' })
 			expect(result.success).toBe(false)
+		})
+
+		// TB returns `email: null` for customers without one (site-customers in
+		// prod). The response validator must accept it — regression guard for the
+		// `required: ['email']` spec defect fixed in patchCustomerNullableEmail.
+		it('accepts a customer with email: null', () => {
+			const result = zCustomer.safeParse({ title: 'Acme Corp', email: null })
+			expect(result.success).toBe(true)
+		})
+
+		it('accepts a getCustomerById response with email: null', () => {
+			const result = zGetCustomerByIdResponse.safeParse({
+				title: 'Site Customer',
+				email: null,
+				tenantId: { id: TENANT_UUID, entityType: 'TENANT' },
+				id: { id: CUSTOMER_UUID, entityType: 'CUSTOMER' },
+			})
+			expect(result.success).toBe(true)
 		})
 	})
 

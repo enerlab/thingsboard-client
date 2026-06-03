@@ -931,6 +931,55 @@ function patchOutputStrategy(schemas: Record<string, Schema>, errors: string[]):
   console.log(`patch-spec: OutputStrategy — patched: ${applied}, already-patched: ${alreadyPatched}`)
 }
 
+/**
+ * TB's spec marks `email` as `required` on the Customer schema, but ThingsBoard
+ * returns `email: null` for customers that have none (confirmed in prod for
+ * site-customers). Codegen then emits `email: z.string()` — required &
+ * non-nullable — so the `getCustomerById` response validator rejects EVERY
+ * customer with a null email (thingsboard/thingsboard#15673, nullable optionals).
+ *
+ * Root cause is `required: ['email', 'title']`. Drop `email` from `required` so
+ * codegen emits it as optional; postgenerate's makeOptionalFieldsNullable() then
+ * widens it to `.nullable().optional()`, matching every sibling contact field
+ * (country/state/city/address/address2/zip/phone) — all already non-required in
+ * the spec and already nullable on the wire.
+ *
+ * `title` stays required: TB's Customer.title is NOT NULL (the display name,
+ * duplicated read-only into `name`) and is always present on the wire. The audit
+ * of zCustomer confirms `email` and `title` were the only two non-nullable,
+ * non-optional string fields — every other contact field was already loosened.
+ * Don't blanket-nullable; only `email` is the genuine defect here.
+ *
+ * Covers all four shapes via forEachShape so a future CustomerWritable doesn't
+ * regress (CustomerInfo carries the same `required` array today; *Writable
+ * shapes are absent from the spec and synthesized downstream from the base).
+ */
+function patchCustomerNullableEmail(
+  schemas: Record<string, Schema>,
+  errors: string[],
+): void {
+  const FIELD = 'email'
+  const result = forEachShape('Customer', schemas, (schema, name) => {
+    const properties = schema.properties as Record<string, unknown> | undefined
+    if (!properties || !(FIELD in properties)) {
+      errors.push(
+        `Customer email patch: "${name}" has no "${FIELD}" property — upstream may have renamed or removed it; review patchCustomerNullableEmail`,
+      )
+      return 'already-patched'
+    }
+    const required = schema.required
+    if (!Array.isArray(required)) {
+      // Nothing required → email is already non-required, nothing to do.
+      return 'already-patched'
+    }
+    const idx = required.indexOf(FIELD)
+    if (idx === -1) return 'already-patched'
+    required.splice(idx, 1)
+    return 'patched'
+  })
+  logShapeResult('Customer email', result)
+}
+
 const spec: Spec = JSON.parse(readFileSync(SPEC_PATH, 'utf8'))
 const schemas = spec.components.schemas
 
@@ -970,6 +1019,7 @@ for (const [parentName, mapping] of Object.entries(DISCRIMINATOR_MAPPINGS)) {
 patchCalculatedFieldConfiguration(schemas, errors)
 patchJsonStringRequestBodies(spec, errors)
 patchOutputStrategy(schemas, errors)
+patchCustomerNullableEmail(schemas, errors)
 
 if (errors.length > 0) {
   console.error('patch-spec: ERRORS:')
