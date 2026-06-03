@@ -52996,6 +52996,7 @@
           }
         },
         "required": [
+          "email",
           "title"
         ]
       },
@@ -62800,6 +62801,7 @@
           }
         },
         "required": [
+          "email",
           "title"
         ]
       },

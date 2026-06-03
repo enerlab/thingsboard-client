@@ -978,6 +978,16 @@ function patchCustomerNullableEmail(
     return 'patched'
   })
   logShapeResult('Customer email', result)
+  // Loud-fail if no Customer* shape matched at all: every variant landed in
+  // `missing`, so the patch silently did nothing. Upstream likely renamed or
+  // removed the Customer schemas — review/remove patchCustomerNullableEmail
+  // rather than shipping a regression. (Per-shape defects — a present shape
+  // missing the `email` property — already push their own error above.)
+  if (result.patched.length === 0 && result.alreadyPatched.length === 0) {
+    errors.push(
+      'Customer email patch: found 0 matching Customer* schemas — upstream may have renamed or removed them; review/remove patchCustomerNullableEmail',
+    )
+  }
 }
 
 const spec: Spec = JSON.parse(readFileSync(SPEC_PATH, 'utf8'))
