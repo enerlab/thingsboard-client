@@ -68,15 +68,20 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      # Tag for traceability only after a successful publish. Skipped if the tag
-      # already exists (e.g. a stale tag from an earlier failed publish attempt)
-      # so it never turns an otherwise-successful release red.
+      # Tag for traceability. Runs on any successful job — not gated on the
+      # publish flag — so a publish that succeeded but whose tag push failed can
+      # be retried via workflow_dispatch (the rerun sees publish=false because
+      # the version is already on npm, but the tag is still missing). Existence
+      # is checked against the remote (actions/checkout doesn't fetch tags by
+      # default), so an already-tagged version is a clean skip, never a red push.
       - name: Tag release
-        if: steps.check.outputs.publish == 'true'
+        if: success()
+        env:
+          VERSION: ${{ steps.pkg.outputs.version }}
         run: |
-          tag="v${{ steps.pkg.outputs.version }}"
-          if git rev-parse "$tag" >/dev/null 2>&1; then
-            echo "Tag $tag already exists — skipping."
+          tag="v${VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists on origin — skipping."
           else
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
