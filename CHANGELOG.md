@@ -2,6 +2,21 @@
 
 Versions follow `MAJOR.MINOR.PATCH-<edition>.<build>.<client-revision>` (see README "Versioning").
 
+## 4.3.1-pe.1.5
+
+### Changed
+
+- **The root entry no longer re-exports the Zod schemas.** `zod.gen.d.ts` is
+  17.1 MB of the package's 18.8 MB of declarations, and the root's
+  `export * from './generated/zod.gen'` made every importer's typecheck and
+  type-aware lint parse it, even one importing only `login`: about 390 MB of
+  memory per TypeScript program in the enerlab-hub monorepo. The SDK still
+  validates requests and responses with the same schemas, so runtime behaviour
+  is unchanged.
+
+  **Breaking for anyone importing a `z…` schema from the package root.** Import
+  it from `@enerlab/thingsboard-client/zod`, as the README already shows.
+
 ## 4.3.1-pe.1.4
 
 ### Fixed
