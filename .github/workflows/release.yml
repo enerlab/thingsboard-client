@@ -62,11 +62,15 @@ jobs:
         if: steps.check.outputs.publish == 'true'
         run: pnpm build
 
+      # Trusted publishing: npm trades this job's OIDC token (id-token: write)
+      # for a one-time publish token, so there is no npm secret to expire. It
+      # needs npm 11.5.1 or later, newer than the one Node 22 ships, and npm 11
+      # refuses a prerelease version without an explicit --tag.
       - name: Publish to npm
         if: steps.check.outputs.publish == 'true'
-        run: pnpm publish --access public --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm install -g npm@^11.5.1
+          npm publish --access public --tag latest
 
       # Tag for traceability. Runs on any successful job — not gated on the
       # publish flag — so a publish that succeeded but whose tag push failed can
